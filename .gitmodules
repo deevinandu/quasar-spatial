@@ -1,3 +1,3 @@
 [submodule "quasar-core"]
-	path = quasar-core
+	path = lib/quasar_core
 	url = https://github.com/deevinandu/quasar-core.git
