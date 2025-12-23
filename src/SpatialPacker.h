@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <iostream>
+#include <cstdint>
 
 /**
  * Accessor Stride Aura Check:
@@ -15,14 +16,28 @@
  * for each iteration to jump to the next vertex reliably.
  */
 
+struct MeshData {
+    std::vector<float> vertices;
+    std::vector<uint32_t> indices;
+    std::string name;
+};
+
+/**
+ * Accessor Stride & Index Type Aura Check:
+ * - Accessor Stride: Handles interleaved data layouts by jumping 'stride' bytes per element.
+ * - uint32_t Indices: We promote all indices to 32-bit to ensure internal pipeline uniformity 
+ *   and safety. Large Martian terrains or robotic models can easily exceed the 64k limit 
+ *   of uint16_t; using uint32_t prevents parity errors and overflow during decompression.
+ */
+
 class SpatialPacker {
 public:
     SpatialPacker() = default;
 
-    // Loads a GLB file and extracts XYZ vertex positions
-    std::vector<float> extractVertices(const char* path);
+    // Loads a GLB file and extracts full MeshData for all components
+    std::vector<MeshData> extractMeshData(const char* path);
 
-    // Applies Haar wavelet transform and threshold-based saliency filtering
+    // Applies Haar wavelet transform and threshold-based saliency filtering (Vertices only)
     void compressMesh(std::vector<float>& vertices, float threshold);
 };
 

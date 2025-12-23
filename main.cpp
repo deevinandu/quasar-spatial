@@ -5,6 +5,7 @@
 #include "src/SpatialPacker.h"
 #include "lib/quasar_core/udp_link.h"
 #include "lib/quasar_core/quasar_format.h"
+#include "lib/quasar_core/huffman.h"
 
 /**
  * Quasar Spatial CLI
@@ -40,58 +41,59 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Initializing Quasar Spatial Pipeline..." << std::endl;
     SpatialPacker packer;
+    HuffmanCodec librarian;
 
-    // 1. Extract Vertices
-    std::cout << "Extracting vertices from: " << model_path << std::endl;
-    std::vector<float> vertices = packer.extractVertices(model_path.c_str());
-    if (vertices.empty()) {
-        std::cerr << "No vertices extracted or error loading model." << std::endl;
+    // 1. Extract Full Mesh Topology
+    std::cout << "Extracting MeshData from: " << model_path << std::endl;
+    std::vector<MeshData> components = packer.extractMeshData(model_path.c_str());
+    
+    if (components.empty()) {
+        std::cerr << "No mesh data extracted or error loading model." << std::endl;
         return 1;
     }
-    size_t original_bytes = vertices.size() * sizeof(float);
-    std::cout << "Extracted " << vertices.size() << " vertex components (" << original_bytes << " bytes)." << std::endl;
 
-    // 2. Compress & Quantize
-    std::cout << "Applying Wavelet Transform and 32-bit Quantization..." << std::endl;
-    packer.compressMesh(vertices, threshold);
-
-    // Create a temporary GrayImage wrapper to use our existing quantization engine
-    // We treat the XYZ components as a 1D signal (width = vertices.size(), height = 1)
-    GrayImage spatial_signal(vertices.size(), 1);
-    spatial_signal.data = vertices; 
-
-    // Quantize the 3D signal using your high-precision engine
-    float spatial_scale = 1000.0f; // High precision for 3D coordinates
-    std::vector<uint8_t> quantized_data = quantize(spatial_signal, spatial_scale);
-
-    // Entropy Encode (The Librarian)
-    HuffmanCodec codec;
-    std::vector<uint8_t> compressed_bitstream = codec.compress(quantized_data);
-    
-    float ratio = (float)compressed_bitstream.size() / original_bytes * 100.0f;
-    std::cout << "Compressed 3D Mesh: " << compressed_bitstream.size() << " bytes (" << ratio << "% of original)" << std::endl;
-
-    // 3. Pack into QuasarHeader
-    QuasarHeader header = {};
-    std::memcpy(header.magic, "QSR1", 4);
-    header.file_type = 0x03; // Spatial/Mesh
-    header.original_size = original_bytes;
-    header.compression_flags = 0x02 | 0x01; // Wavelet + Huffman
-    header.scale = spatial_scale;
-    header.width = (uint16_t)vertices.size(); // Store component count
-    header.height = 1;
-
-    // Build final packet
-    std::vector<uint8_t> packet_data(sizeof(QuasarHeader) + compressed_bitstream.size());
-    std::memcpy(packet_data.data(), &header, sizeof(QuasarHeader));
-    std::memcpy(packet_data.data() + sizeof(QuasarHeader), compressed_bitstream.data(), compressed_bitstream.size());
-
-    // 4. Transmit
-    std::cout << "Transmitting " << packet_data.size() << " bytes to " << target_ip << ":" << target_port << "..." << std::endl;
     QuasarTx transmitter;
-    transmitter.send_frame(packet_data, target_ip, target_port);
+    uint32_t current_target_id = 0;
 
-    std::cout << "Mission complete. Spatial data dispatched." << std::endl;
+    for (auto& component : components) {
+        std::cout << "\nProcessing Component [" << current_target_id << "]: " << component.name << std::endl;
+        
+        // --- VERTEX PATH (Signal Logic) ---
+        size_t original_vertex_bytes = component.vertices.size() * sizeof(float);
+        packer.compressMesh(component.vertices, threshold);
+        
+        // --- INDEX PATH (Discrete Logic) ---
+        // Convert uint32_t indices to byte stream for Huffman
+        std::vector<uint8_t> index_bytes(component.indices.size() * sizeof(uint32_t));
+        std::memcpy(index_bytes.data(), component.indices.data(), index_bytes.size());
+        
+        std::cout << "Compressing indices (" << component.indices.size() << ") using Librarian (Huffman)..." << std::endl;
+        std::vector<uint8_t> huffman_indices = librarian.compress(index_bytes);
+
+        // --- THE QUASAR BRIDGE ---
+        QuasarHeader header = {};
+        std::memcpy(header.magic, "QSR1", 4);
+        header.file_type = 0x03; // Spatial/Mesh
+        header.original_size = original_vertex_bytes + index_bytes.size();
+        header.compression_flags = 0x03; // Wavelet (Bit 1) + Huffman (Bit 0)
+        header.scale = 1.0f;
+        header.target_id = current_target_id++;
+
+        // Final payload: Header + Vertices (Signal) + Indices (Discrete)
+        size_t vertex_payload_size = component.vertices.size() * sizeof(float);
+        size_t index_payload_size = huffman_indices.size();
+
+        std::vector<uint8_t> packet_data(sizeof(QuasarHeader) + vertex_payload_size + index_payload_size);
+        std::memcpy(packet_data.data(), &header, sizeof(QuasarHeader));
+        std::memcpy(packet_data.data() + sizeof(QuasarHeader), component.vertices.data(), vertex_payload_size);
+        std::memcpy(packet_data.data() + sizeof(QuasarHeader) + vertex_payload_size, huffman_indices.data(), index_payload_size);
+
+        // 4. Transmit Component
+        std::cout << "Transmitting component payload: " << packet_data.size() << " bytes." << std::endl;
+        transmitter.send_frame(packet_data, target_ip, target_port);
+    }
+
+    std::cout << "\nMission complete. All spatial components dispatched." << std::endl;
 
     return 0;
 }
