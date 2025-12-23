@@ -39,6 +39,12 @@ public:
 
     // Applies Haar wavelet transform and threshold-based saliency filtering (Vertices only)
     void compressMesh(std::vector<float>& vertices, float threshold);
+
+    // Inverse Planar Haar transform to restore vertices
+    void decompressMesh(std::vector<float>& vertices);
+
+    // Exports recovered mesh data to a standard OBJ file
+    static void saveAsOBJ(const std::string& path, const std::vector<float>& vertices, const std::vector<uint32_t>& indices);
 };
 
 #endif // SPATIAL_PACKER_H
